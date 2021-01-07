@@ -17,10 +17,27 @@
     Information and contribution at https://tonuino.de.
 */
 
+/*
+  data stored on the nfc tags:
+  ----------------------------
+
+  Up to 16 bytes of data are stored in sector 1 / block 4, of which the first 8 bytes
+  are currently in use.
+
+  13 37 B3 47 01 02 05 11 00 00 00 00 00 00 00 00
+  ----------- -- -- -- --
+       |      |  |  |  |
+       |      |  |  |  + assigned track (0x01-0xFF, only used in single mode)
+       |      |  |  + assigned mode (0x01-0x05)
+       |      |  + assigned folder (0x01-0x63)
+       |      + version (currently always 0x01 --> 0x02)
+       + magic cookie to recognize that a card belongs to TonUINO
+*/
+
 // uncomment the below line to enable five button support
 //#define FIVEBUTTONS
 
-static const uint32_t cardCookie = 322417479;
+static const uint32_t cardCookie = 322417479; // hex: 0x1337B347
 
 // DFPlayer Mini
 SoftwareSerial mySoftwareSerial(2, 3); // RX, TX
@@ -1099,7 +1116,22 @@ void loop() {
 
   if (readCard(&myCard) == true) {
     if (myCard.cookie == cardCookie && myCard.nfcFolderSettings.folder != 0 && myCard.nfcFolderSettings.mode != 0) {
-      playFolder();
+      if (myCard.nfcFolderSettings.mode == 6) {
+        switch (myCard.nfcFolderSettings.special) {
+          case 0x01: // increase volume
+            for (int i = 0; i < myCard.nfcFolderSettings.folder; ++i) { volumeUpButton(); };
+            break; 
+          case 0x02: // decrease volume
+            for (int i = 0; i < myCard.nfcFolderSettings.folder; ++i) { volumeDownButton(); };
+            break;         
+          case 0x03: break; // set volume
+          case 0x04: break; // play / pause
+          case 0x05: break; // previous track
+          case 0x06: break; // next track
+        }
+      } else {
+        playFolder();
+      }
     }
 
     // Neue Karte konfigurieren
