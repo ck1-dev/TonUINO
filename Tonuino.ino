@@ -28,11 +28,13 @@
   ----------- -- -- -- --
        |      |  |  |  |
        |      |  |  |  + assigned track (0x01-0xFF, only used in single mode)
-       |      |  |  + assigned mode (0x01-0x05)
+       |      |  |  + assigned mode (0x01-0x05) --> mode 0xCC (dec: 204) is mode for control card (by ck1-dev)
        |      |  + assigned folder (0x01-0x63)
        |      + version (currently always 0x01 --> 0x02)
        + magic cookie to recognize that a card belongs to TonUINO
 */
+
+
 
 // uncomment the below line to enable five button support
 //#define FIVEBUTTONS
@@ -84,6 +86,7 @@ struct adminSettings {
 adminSettings mySettings;
 nfcTagObject myCard;
 folderSettings *myFolder;
+folderSettings myControlCardSettings;
 unsigned long sleepAtMillis = 0;
 static uint16_t _lastTrackFinished;
 
@@ -165,8 +168,8 @@ void resetSettings() {
   mySettings.cookie = cardCookie;
   mySettings.version = 2;
   mySettings.maxVolume = 25;
-  mySettings.minVolume = 5;
-  mySettings.initVolume = 15;
+  mySettings.minVolume = 1;
+  mySettings.initVolume = 10;
   mySettings.eq = 1;
   mySettings.locked = false;
   mySettings.standbyTimer = 0;
@@ -852,6 +855,7 @@ void nextButton() {
     if (activeModifier->handleNextButton() == true)
       return;
 
+  Serial.println(F("=== nextButton()"));
   nextTrack(random(65536));
   delay(1000);
 }
@@ -861,6 +865,7 @@ void previousButton() {
     if (activeModifier->handlePreviousButton() == true)
       return;
 
+  Serial.println(F("=== previousButton()"));
   previousTrack();
   delay(1000);
 }
@@ -1116,18 +1121,31 @@ void loop() {
 
   if (readCard(&myCard) == true) {
     if (myCard.cookie == cardCookie && myCard.nfcFolderSettings.folder != 0 && myCard.nfcFolderSettings.mode != 0) {
-      if (myCard.nfcFolderSettings.mode == 6) {
-        switch (myCard.nfcFolderSettings.special) {
+      if (myControlCardSettings.mode == 0xCC) {
+        switch (myControlCardSettings.special) {
           case 0x01: // increase volume
-            for (int i = 0; i < myCard.nfcFolderSettings.folder; ++i) { volumeUpButton(); };
+            for (int i = 0; i < myControlCardSettings.folder; ++i) { volumeUpButton(); };
             break; 
           case 0x02: // decrease volume
-            for (int i = 0; i < myCard.nfcFolderSettings.folder; ++i) { volumeDownButton(); };
+            for (int i = 0; i < myControlCardSettings.folder; ++i) { volumeDownButton(); };
             break;         
-          case 0x03: break; // set volume
-          case 0x04: break; // play / pause
-          case 0x05: break; // previous track
-          case 0x06: break; // next track
+          case 0x03: // set volume
+            break;
+          case 0x04: // play / pause
+            if (isPlaying()) {
+              mp3.pause();
+              setstandbyTimer();
+            } else if (knownCard) {
+              mp3.start();
+              disablestandbyTimer();
+            }
+            break;
+          case 0x05: // previous track
+            previousButton();
+            break;
+          case 0x06: // next track
+            nextButton();
+            break;
         }
       } else {
         playFolder();
@@ -1654,10 +1672,36 @@ bool readCard(nfcTagObject * nfcTag) {
 
   tempCard.cookie = tempCookie;
   tempCard.version = buffer[4];
-  tempCard.nfcFolderSettings.folder = buffer[5];
-  tempCard.nfcFolderSettings.mode = buffer[6];
-  tempCard.nfcFolderSettings.special = buffer[7];
-  tempCard.nfcFolderSettings.special2 = buffer[8];
+
+  int8_t newMode;
+
+  newMode = buffer[6];
+  Serial.println((int8_t)newMode);
+
+  if (newMode == (int8_t)0xCC) { // control card -- keep settings from previous non-admin card; store admin card settings separately
+    Serial.print(F("control card found (Function: "));
+    Serial.print(buffer[7]);
+    Serial.println(F(")"));
+    myControlCardSettings.folder = buffer[5];
+    myControlCardSettings.mode = buffer[6];
+    myControlCardSettings.special = buffer[7];
+    myControlCardSettings.special2 = buffer[8]; 
+    tempCard.nfcFolderSettings.folder = myCard.nfcFolderSettings.folder;
+    tempCard.nfcFolderSettings.mode = myCard.nfcFolderSettings.mode;
+    tempCard.nfcFolderSettings.special = myCard.nfcFolderSettings.special;
+    tempCard.nfcFolderSettings.special2 = myCard.nfcFolderSettings.special2;
+  } else {
+    myControlCardSettings.folder = 0;
+    myControlCardSettings.mode = 0;
+    myControlCardSettings.special = 0;
+    myControlCardSettings.special2 = 0;
+    tempCard.nfcFolderSettings.folder = buffer[5];
+    tempCard.nfcFolderSettings.mode = buffer[6];
+    tempCard.nfcFolderSettings.special = buffer[7];
+    tempCard.nfcFolderSettings.special2 = buffer[8];
+  }
+
+
 
   if (tempCard.cookie == cardCookie) {
 
